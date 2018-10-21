@@ -1,0 +1,18 @@
+<package format="2">
+  <name>rosdonatebox_msgs</name>
+  <version>0.1.0</version>
+  <description>
+    rosDonateBox message and service files.
+  </description>
+  <author>XDN</author>
+  <maintainer email="xdnmail@gmail.com">XDN</maintainer>
+  <license>GPL</license>
+  <url></url>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>message_generation</build_depend>
+  
+  <exec_depend>message_runtime</exec_depend>
+
+  <depend>std_msgs</depend>
+</package>
