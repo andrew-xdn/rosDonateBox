@@ -17,9 +17,8 @@
 #include <TimeLib.h>
 #include <uCRC16Lib.h>
 
-// Firmware version constants
-const int fwVersionMajor = 0;
-const int fwVersionMinor = 4;
+#include "config.hpp"
+#include "DG600FMode3.hpp"
 
 // TELNET server
 WiFiServer telnetServer(23);
@@ -51,20 +50,15 @@ bool wifiApMode;
 // Current device state
 DeviceState deviceState;
 
-// Maximum WiFi SSID length
-const int maxSSIDLength = 30;
-// Maximum WiFi PSK length
-const int maxPSKLength = 30;
-
 // Pack the following structure (saves some space on EEPROM)
 #pragma pack(push, 1) 
 // Device EEPROM record
 struct DeviceEeprom
 {
   // Target WiFi network SSID (max length + '\0')
-  char targetSSID[maxSSIDLength + 1];
+  char targetSSID[config::maxSSIDLength + 1];
   // Target WiFi network PSK (max length + '\0')
-  char targetPSK[maxPSKLength + 1];
+  char targetPSK[config::maxPSKLength + 1];
 
   // rosserial server IP (integer representation)
   uint32_t rosserialIP;
@@ -91,18 +85,11 @@ const DeviceEeprom deviceEepromDefault =
   // No checksum
 };
 
-// WiFi SSID in the AP state
-const char *APModeSSID = "rosDonateBox";
-// WiFi PSK in the AP state
-const char *APModePSK = "mufFins4D";
-
 // ROS handle
 ros::NodeHandle nh;
 
-// Maximum command arguments number in a command
-const unsigned int commandMaxArguments = 3;
 // Maximum command tokens number in a command string (command + maximum arguments number)
-constexpr unsigned int commandMaxTokens = 1 + commandMaxArguments;
+constexpr unsigned int commandMaxTokens = 1 + config::commandMaxArguments;
 
 // Command scanner error codes (non-negative number is a tokens count)
 enum CommandScanError
@@ -318,7 +305,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
           }
 
         // SSID is short enought to fit into the EEPROM field
-        if (tokens[2].length() <= maxSSIDLength)
+        if (tokens[2].length() <= config::maxSSIDLength)
         {
           // Copy the token contents inside the C string
           strcpy(deviceEeprom.targetSSID, tokens[2].c_str());
@@ -328,7 +315,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
         else
         {
           Serial.printf("[TELNET] Too long SSID: %u\n", tokens[2].length());
-          telnetPrint(String("SSID can't be longer than ") + maxSSIDLength + "!\r\n");
+          telnetPrint(String("SSID can't be longer than ") + config::maxSSIDLength + "!\r\n");
         }
       }
       // Target WiFi PSK
@@ -356,7 +343,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
           }
 
         // PSK is short enought to fit into the EEPROM field
-        if (tokens[2].length() <= maxPSKLength)
+        if (tokens[2].length() <= config::maxPSKLength)
         {
           // Copy the token contents inside the C string
           strcpy(deviceEeprom.targetPSK, tokens[2].c_str());
@@ -366,7 +353,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
         else
         {
           Serial.printf("[TELNET] Too long PSK: %u\n", tokens[2].length());
-          telnetPrint(String("PSK can't be longer than ") + maxPSKLength + "!\r\n");
+          telnetPrint(String("PSK can't be longer than ") + config::maxPSKLength + "!\r\n");
         }
       }
       // rosserial server IP
@@ -748,154 +735,21 @@ void handleTelnet()
   }
 }
 
-// DG600F INHIBIT pin (after the logic level converter)
-constexpr int inhibitPin = D0;
-
 // Switch DG600F coin acceptance mode
 //  enable - accept coins (true); return coins (false).
 void enableCoinAcceptance(bool enable)
 {
   Serial.printf("[COIN_ACCEPTANCE] %s\n", (enable) ? "Enabled" : "Disabled");
-  digitalWrite(inhibitPin, (enable) ? HIGH : LOW);
+  digitalWrite(config::inhibitPin, (enable) ? HIGH : LOW);
 }
-
-// DG600F SIGNAL (after logic converter)
-constexpr int signalPin = D6;
-
-// DG600F SIGNAL UART RX buffer size
-const unsigned int signalRxBufferSize = 512;
 
 // Software serial object (RX only) connected to DG600F SIGNAL (after logic converter)
 // HINT: ESP8266 with Arduino doesn't have any free hardware serial RX. Software serial isn't a good
 // solution, but due to a high ESP8266 clock frequency and low DG600F SIGNAL baudrate (up to 9600) it works fine.
-SoftwareSerial DG600FSerial(signalPin, SW_SERIAL_UNUSED_PIN, false, signalRxBufferSize);
+SoftwareSerial DG600FSerial(config::signalPin, SW_SERIAL_UNUSED_PIN, false, config::signalRxBufferSize);
 
-// DG600F Mode 3 header character
-const char DG600FMode3Header = 0xAA;
-
-// DG600F Mode 3 driver FSM states
-enum DG600FMode3State
-{
-  DM3S_HEADER = 0,  // Waiting for the header
-  DM3S_VALUE,  // Waiting for the coin value
-  DM3S_CHECKSUM  // Waiting for the checksum
-};
-
-// Process DG600F Mode 3 data
-// Return:
-//    -1 (all data has been parsed), coin value (a frame has been found)
-// HINT: Call this function repeatedly until you get -1
-int readDG600FMode3()
-{
-  // DG600F Mode 3 FSM state
-  // HINT: Self-synchronizing FSM, no need to reset this state outside of the function
-  static DG600FMode3State state = DM3S_HEADER;
-  // A character from the serial
-  static int c;
-  // A recieved coin value
-  static unsigned int value;
-
-//  // The buffer overflow detected
-//  // WARNING: Old SoftwareSerial library versions don't support this method
-//  if (DG600FSerial.overflow())
-//    Serial.printf("[DG600F_MODE3] Serial buffer overflow\n");
-
-  // Get a byte from the serial
-  c = DG600FSerial.read();
-
-  // It's a byte
-  while (c >= 0)
-  {
-    switch(state)
-    {
-      // Waiting for the frame header
-      case DM3S_HEADER:
-        // It's not a header
-        if (c != DG600FMode3Header)
-          Serial.printf("[DG600F_MODE3] Invalid header: 0x%02X\n", static_cast<unsigned int>(c));
-        // It's a header
-        else
-        {
-          Serial.printf("[DG600F_MODE3] Received header\n");
-
-          // Waiting for a coin value
-          state = DM3S_VALUE;
-        }
-        break;
-      // Waiting for the coin value
-      case DM3S_VALUE:
-        // Coin value can't be greater than 100
-        if (c <= 100)
-        {
-          // Store the coin value
-          value = static_cast<unsigned int>(c);
-          Serial.printf("[DG600F_MODE3] Received sum: %u\n", value);
-
-          // Waiting for the frame checksum
-          state = DM3S_CHECKSUM;
-        }
-        // HINT: It's really good that coin value can't be 0xAA. Here we can find out that
-        // the previous frame had been canceled and the header from the new one recieved.
-        else if (c == DG600FMode3Header)
-        {
-          Serial.printf("[DG600F_MODE3] Received header\n");
-
-          // No need to switch to the new state
-        }
-        // It's an invalid sum
-        else
-        {
-          Serial.printf("[DG600F_MODE3] Invalid sum: 0x%02X\n", static_cast<unsigned int>(c));
-
-          // Waiting for a new frame, this one is corrupted
-          state = DM3S_HEADER;
-        }
-        break;
-      // Waiting for the checksum
-      case DM3S_CHECKSUM:
-        // Checksum is valid
-        if (c == (DG600FMode3Header ^ value))
-        {
-          Serial.printf("[DG600F_MODE3] Received checksum (valid frame): 0x%02X\n", static_cast<unsigned int>(c));
-
-          // Waiting for a new frame
-          state = DM3S_HEADER;
-
-          // Jump out of the function to return the coin value
-          // HINT: Some data may still be in the serial buffer. User should call this function repeatedly until he or she
-          //  gets -1.
-          return value;
-        }
-        // Invalid checksum
-        else
-        {
-          Serial.printf("[DG600F_MODE3] Received checksum (invalid frame): 0x%02X\n", static_cast<unsigned int>(c));
-
-          // It may be a frame header
-          if (c == DG600FMode3Header)
-          {
-            Serial.printf("[DG600F_MODE3] Received header\n");
-
-            // Waiting for a coin value
-            // HINT: Even if it was a corrupted checksum or a valid checksum with a corrupted coin value it's not a problem
-            state = DM3S_VALUE;
-
-            break;
-          }
-
-          // Waiting for the next frame, this one is corrupted
-          state = DM3S_HEADER;
-        }
-        break;
-    }
-
-    // Get a new byte from the serial
-    c = DG600FSerial.read();
-  }
-
-  // No more data from the serial
-  return -1;
-}
+// DG600F mode 3 driver
+DG600FMode3 coinAcceptor(DG600FSerial);
 
 // A donation ROS message
 rosdonatebox_msgs::Donation donationMessage;
@@ -917,15 +771,8 @@ void donationTimeoutCallback()
 // hasn't been sent from the first attempt
 bool donationStamped;
 
-// SSD1306 display I2C address
-const uint8_t displayI2CAddress = 0x3C;
-// Display geometry in pixels
-const int displayWidth = 128;
-const int displayHeight = 64;
-//
-
 // Display object
-SSD1306Brzo display(displayI2CAddress, SDA, SCL);
+SSD1306Brzo display(config::displayI2CAddress, SDA, SCL);
 
 // Font heights constants to calculate frame geometry
 // HINT: It doesn't look like constexpr can calculate PROGMEM read requests
@@ -940,50 +787,50 @@ void displayLogo()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (displayHeight - (fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2 + fontArialMTPlain10Height)) / 2;
+  constexpr unsigned int yOffset = (config::displayHeight - (fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2 + fontArialMTPlain10Height)) / 2;
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   // Project logo
   String logo("ROS Donate Box");
   uint16_t width = display.getStringWidth(logo);
-  display.drawString(displayWidth/2, yOffset, logo);
+  display.drawString(config::displayWidth / 2, yOffset, logo);
   //
-  display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, displayWidth);
+  display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, config::displayWidth);
   // Firmware version string
-  String versionString(String('v') + fwVersionMajor + '.' + fwVersionMinor);
+  String versionString(String('v') + config::fwVersionMajor + '.' + config::fwVersionMinor);
   width = display.getStringWidth(versionString);
-  display.drawString(displayWidth/2, yOffset + fontArialMTPlain16Height + 3, versionString);
+  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3, versionString);
   //
   // Add a catch phrase to fill some space at the bottom
   String catchPhrase("Robots need money too...");
   display.setFont(ArialMT_Plain_10);
-  display.drawString(displayWidth/2, yOffset + fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2, catchPhrase);
+  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2, catchPhrase);
   //
   display.display();
 }
 
-// Display "Connecting in progress..." frame
+// Display "connecting to" frame
 // Arguments:
 //  target - a connection target string.
 void displayConnectingFrame(String target)
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (displayHeight - (3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
+  constexpr unsigned int yOffset = (config::displayHeight - (3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
   // Top line
-  display.drawHorizontalLine(0, yOffset, displayWidth);
+  display.drawHorizontalLine(0, yOffset, config::displayWidth);
   // "Connecting to" header
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String header("Connecting to");
   uint16_t width = display.getStringWidth(header);
-  display.drawString(displayWidth/2, yOffset + 3, header);
+  display.drawString(config::displayWidth / 2, yOffset + 3, header);
   // Connection target text with a postfix
   String targetWithPostfix(target + "...");
   width = display.getStringWidth(targetWithPostfix);
-  display.drawString(displayWidth/2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
+  display.drawString(config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
   // Bottom line
-  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, displayWidth);
+  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, config::displayWidth);
   //
   display.display();
 }
@@ -993,24 +840,24 @@ void displayAPModeFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
+  constexpr unsigned int yOffset = (config::displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
   // Header
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String header = "SETUP MODE";
   uint16_t width = display.getStringWidth(header);
-  display.drawString(displayWidth / 2, yOffset, header);
+  display.drawString(config::displayWidth / 2, yOffset, header);
   // Horizontal line to separate the header from connection information
-  display.drawLine(0, yOffset + 19 + 3, displayWidth, yOffset + 19 + 3);
+  display.drawLine(0, yOffset + 19 + 3, config::displayWidth, yOffset + 19 + 3);
   // AP SSID
   display.setFont(ArialMT_Plain_10);
-  String ssidInfo(String("SSID: \"") + APModeSSID + '"');
+  String ssidInfo(String("SSID: \"") + config::APModeSSID + '"');
   width = display.getStringWidth(ssidInfo);
-  display.drawString(displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
+  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
   // Device IP address
   String ipInfo("IP: " + WiFi.softAPIP().toString());
   width = display.getStringWidth(ipInfo);
-  display.drawString(displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
+  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
   //
   display.display();
 }
@@ -1057,7 +904,7 @@ void drawOverlay()
   // The last IP address octet on the right side
   display.setTextAlignment(TEXT_ALIGN_RIGHT);
   String IPLastOctet(WiFi.localIP()[3]);
-  display.drawString(displayWidth, 0, IPLastOctet);
+  display.drawString(config::displayWidth, 0, IPLastOctet);
 }
 
 // Display the donation frame
@@ -1065,7 +912,7 @@ void displayDonationFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = overlayHeight + (displayHeight - (overlayHeight + fontDialogPlain40Height)) / 2;
+  constexpr unsigned int yOffset = overlayHeight + (config::displayHeight - (overlayHeight + fontDialogPlain40Height)) / 2;
   // Draw the overlay
   drawOverlay();
   // The donation has started
@@ -1075,7 +922,7 @@ void displayDonationFrame()
     display.setFont(Dialog_plain_40);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     String donationSum(donationMessage.sum);
-    display.drawString(displayWidth / 2, yOffset, donationSum);
+    display.drawString(config::displayWidth / 2, yOffset, donationSum);
   }
   //
   display.display();
@@ -1086,14 +933,14 @@ void displayGratitudeFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = overlayHeight + (displayHeight - (overlayHeight + fontArialMTPlain24Height)) / 2;
+  constexpr unsigned int yOffset = overlayHeight + (config::displayHeight - (overlayHeight + fontArialMTPlain24Height)) / 2;
   // Draw the overlay
   drawOverlay();
   // Gratitude
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String donationSum("Thank you!");
-  display.drawString(displayWidth/2, yOffset, donationSum);
+  display.drawString(config::displayWidth / 2, yOffset, donationSum);
   //
   display.display();
 }
@@ -1121,14 +968,14 @@ void setup()
   Serial.begin(115200);
   // DG600F SIGNAL pin pull-up setup
   // HINT: The pin direction has been set during the SoftwareSerial object construction
-  digitalWrite(signalPin, HIGH);
+  digitalWrite(config::signalPin, HIGH);
   // DG600F SIGNAL UART setup
   DG600FSerial.begin(9600);
   // DG600F INHIBIT pin setup
-  pinMode(inhibitPin, OUTPUT);
+  pinMode(config::inhibitPin, OUTPUT);
   
   //Serial.setDebugOutput(true);
-  Serial.printf("ROS Donate Box v%u.%u\n", fwVersionMajor, fwVersionMinor);
+  Serial.printf("ROS Donate Box v%u.%u\n", config::fwVersionMajor, config::fwVersionMinor);
 
   // Disable coins acceptance
   enableCoinAcceptance(false);
@@ -1193,7 +1040,7 @@ void loop()
 
       Serial.printf("[INIT] Display test\n");
       // Display test sequence
-      display.fillRect(0, 0, displayWidth, displayHeight);
+      display.fillRect(0, 0, config::displayWidth, config::displayHeight);
       display.display();
       delay(1000);
       display.clear();
@@ -1306,7 +1153,7 @@ void loop()
       Serial.printf("[STATE] WIFI_AP_SETUP\n");
 
       // Enable WiFi AP mode
-      if (!WiFi.softAP(APModeSSID, APModePSK))
+      if (!WiFi.softAP(config::APModeSSID, config::APModePSK))
       {
         Serial.printf("[WIFI] AP setup failed.\n");
 
@@ -1554,7 +1401,7 @@ void loop()
         static int coinValue;
 
         // Try to parse a frame
-        coinValue = readDG600FMode3();
+        coinValue = coinAcceptor.read();
 
         // The frame has been parsed
         while (coinValue >= 0)
@@ -1588,7 +1435,7 @@ void loop()
           displayDonationFrame();
 
           // Try to get the frame again
-          coinValue = readDG600FMode3();
+          coinValue = coinAcceptor.read();
         }
       }
     }
