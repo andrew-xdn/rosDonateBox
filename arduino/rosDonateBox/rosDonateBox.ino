@@ -19,12 +19,8 @@
 
 #include "config.hpp"
 #include "DG600FMode3.hpp"
-
-// TELNET server
-WiFiServer telnetServer(23);
-// TELNET client object
-// HINT: Only 1 client is availible
-WiFiClient telnetClient;
+#include "CommandScanner.hpp"
+#include "TelnetServer.hpp"
 
 // Device FSM states
 enum DeviceState
@@ -88,135 +84,12 @@ const DeviceEeprom deviceEepromDefault =
 // ROS handle
 ros::NodeHandle nh;
 
-// Maximum command tokens number in a command string (command + maximum arguments number)
-constexpr unsigned int commandMaxTokens = 1 + config::commandMaxArguments;
-
-// Command scanner error codes (non-negative number is a tokens count)
-enum CommandScanError
-{
-  CSE_MANY_TOKENS = -1,  // Too many tokens in the command string
-  CSE_UNTERMINATED_ESCAPE = -2  // Unterminated double quotes in the command string
-};
-
-// Split a command string to command tokens
+// Parse a TELNET command
 //  Arguments:
-//    command - command string,
-//    tokens - string object references array.
-//  Returns:
-//    tokens count (if positive or zero), error code (if negative).
-int scanCommand(String& command, String (&tokens)[commandMaxTokens])
-{
-    Serial.printf("[COMMAND_SCANNER] Incoming command: \"%s\"\n", command.c_str());
- 
-    int charIndex;
-    char c;
-    
-    int tokenIndex = 0;
-
-    // Space escape flag (" has been found)
-    bool escapeFlag = false;
-    // Token is empty flag ("")
-    // HINT: Empty tokens are useful to set an empty value to the parameter
-    bool emptyToken = false;
-
-    // Check all characters
-    for (charIndex = 0; charIndex < command.length(); charIndex++)
-    {
-      // Retrieve a current character
-      c = command[charIndex];
-      
-      switch (c)
-      {
-        // Token termination
-        case ' ':
-          // There has been no " character, it's really a token termination
-          if (!escapeFlag)
-          {
-            // The token termination is only possible if it's an empty token ("") or a token with some characters
-            if (emptyToken || tokens[tokenIndex].length())
-            {
-              // We have a free string object in the array to keep a new token
-              if (tokenIndex < commandMaxTokens - 1)
-              {
-                Serial.printf("[COMMAND_SCANNER] Token found: \"%s\"\n", tokens[tokenIndex].c_str());
-
-                tokenIndex++;
-                emptyToken = false;
-                // Clean the storage for the new token
-                tokens[tokenIndex] = "";
-              }
-              // We have run out of the string objects
-              else
-              {
-                Serial.printf("[COMMAND_SCANNER] Too many tokens!\n");
-
-                // Return the error code
-                return CSE_MANY_TOKENS;
-              }
-            }
-            // It is a space sequence out of the "", ignore it
-          }
-          // A space character inside the "", it's a part of the token
-          else
-            tokens[tokenIndex] += c;
-            
-          break;
-        // Space escape character
-        case '"':
-          // Escape flag is already set, but ther is nothing inside the token - it's an empty token ("")
-          if (escapeFlag && !tokens[tokenIndex].length())
-            emptyToken = true;
-
-          // Inverse the empty token flag
-          escapeFlag = !escapeFlag;
-          break;
-        // Any other character
-        default:
-         // Add to the token
-         tokens[tokenIndex] += c;
-         break;
-      }
-    }
-
-    // The string has ended, we have to terminate the last token
-
-    // There is no pair for the last escape character
-    if (escapeFlag)
-    {
-      Serial.printf("[COMMAND_SCANNER] Unterminated escape!\n");
-
-      // Return the error
-      return CSE_UNTERMINATED_ESCAPE;
-    }
-
-    // It's an empty token or a token with some characters
-    if (emptyToken || tokens[tokenIndex].length())
-    {
-      Serial.printf("[COMMAND_SCANNER] New token found: \"%s\"\n", tokens[tokenIndex].c_str());
-
-      tokenIndex++;
-    }
-
-    Serial.printf("[TELNET_COMMAND] Total number of tokens: %u\n", tokenIndex);
-
-    return tokenIndex;
-}
-
-// Print a string and flush the buffer
-// HINT: There is no printf-like version of the function (WiFiClient doesn't support a vprintf method)
-//  Arguments:
-//    s - a string to print.
-void telnetPrint(const String &s)
-{
-  telnetClient.print(s);
-  telnetClient.flush();
-}
-
-// Parse a telnet command
-//  Arguments:
+//    caller - a colling TELNET server,
 //    tokens - command tokens array after scanning,
 //    tokensNumber - a number of tokens the scanner has found.
-void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
+void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::commandMaxTokens], unsigned int tokensNumber)
 {
   // The user has passed an empty tokens array
   if (!tokensNumber)
@@ -232,14 +105,14 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber > 1)
     {
       Serial.printf("[TELNET] Exit command doesn't accept any arguments!\n");
-      telnetPrint("Exit command doesn't accept any arguments!\r\n");
+      caller.print("Exit command doesn't accept any arguments!\r\n");
     }
     else
     {
       Serial.printf("[TELNET] Exit command, disconnecting the client...\n");
 
       // Close the user TELNET session
-      telnetClient.stop();
+      caller.disconnectClient();
     }
   }
   // User requested to print all the parameters
@@ -249,14 +122,14 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber > 1)
     {
       Serial.printf("[TELNET] List command doesn't accept any arguments!\n");
-      telnetPrint("List command doesn't accept any arguments!\r\n");
+      caller.print("List command doesn't accept any arguments!\r\n");
     }
     else
     {
       Serial.printf("[TELNET] List command, printing EEPROM parameters...\n");
 
       // Print all device EEPROM parameter using the string class
-      telnetPrint(String("TARGET_SSID = \"") + deviceEeprom.targetSSID + "\"\r\nTARGET_PSK = " +
+      caller.print(String("TARGET_SSID = \"") + deviceEeprom.targetSSID + "\"\r\nTARGET_PSK = " +
         ((deviceEeprom.targetPSK[0]) ? "****" : "-") + "\r\nROS_IP = " + 
         ((deviceEeprom.rosserialIP) ? IPAddress(deviceEeprom.rosserialIP).toString() : "-") + "\r\nROS_PORT = " +
         ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\n");
@@ -269,7 +142,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber != 3)
     {
       Serial.printf("[TELNET] Set command accepts 2 arguments!\n");
-      telnetPrint("Set command accepts 2 arguments!\r\n");
+      caller.print("Set command accepts 2 arguments!\r\n");
     }
     else
     {
@@ -299,7 +172,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
           if (!isPrintable(tokens[2][i]))
           {
             Serial.printf("[TELNET] SSID contains invalid characters!\n");
-            telnetPrint("SSID contains invalid characters!\r\n");
+            caller.print("SSID contains invalid characters!\r\n");
             
             return;
           }
@@ -315,7 +188,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
         else
         {
           Serial.printf("[TELNET] Too long SSID: %u\n", tokens[2].length());
-          telnetPrint(String("SSID can't be longer than ") + config::maxSSIDLength + "!\r\n");
+          caller.print(String("SSID can't be longer than ") + config::maxSSIDLength + "!\r\n");
         }
       }
       // Target WiFi PSK
@@ -337,7 +210,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
           if (!isPrintable(tokens[2][i]))
           {
             Serial.printf("[TELNET] PSK contains invalid characters!\n");
-            telnetPrint("PSK contains invalid characters!\r\n");
+            caller.print("PSK contains invalid characters!\r\n");
             
             return;
           }
@@ -353,7 +226,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
         else
         {
           Serial.printf("[TELNET] Too long PSK: %u\n", tokens[2].length());
-          telnetPrint(String("PSK can't be longer than ") + config::maxPSKLength + "!\r\n");
+          caller.print(String("PSK can't be longer than ") + config::maxPSKLength + "!\r\n");
         }
       }
       // rosserial server IP
@@ -385,7 +258,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
           else
           {
             Serial.printf("[TELNET] Invalid IP address!\n");
-            telnetPrint("Invalid IP address!\r\n");
+            caller.print("Invalid IP address!\r\n");
           }
         }
       }
@@ -406,7 +279,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
         else
         {
           Serial.printf("[TELNET] Invalid port!\n");
-          telnetPrint("Invalid port!\r\n");
+          caller.print("Invalid port!\r\n");
         }
       }
       // HINT: You can handle new parameter here
@@ -414,7 +287,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
       else
       {
         Serial.printf("[TELNET] Unknown parameter!\n");
-        telnetPrint("Unknown parameter!\r\n");
+        caller.print("Unknown parameter!\r\n");
       }
     }
   }
@@ -425,12 +298,12 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber > 1)
     {
       Serial.printf("[TELNET] Save command doesn't accept any arguments!\n");
-      telnetPrint("Save command doesn't accept any arguments!\r\n");
+      caller.print("Save command doesn't accept any arguments!\r\n");
     }
     else
     {
       Serial.printf("[TELNET] Saving to EEPROM...\n");
-      telnetPrint("Saving to EEPROM...");
+      caller.print("Saving to EEPROM...");
 
       // Prepare a pointer for the device EEPROM structure in RAM
       uint8_t *pDeviceEeprom = reinterpret_cast<uint8_t *>(&deviceEeprom);
@@ -450,7 +323,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
       EEPROM.commit();
 
       Serial.printf("[TELNET] Saving to EEPROM has been completed\n");
-      telnetPrint(" done\r\n");
+      caller.print(" done\r\n");
     }
   }
   // User requested to reboot the device
@@ -460,7 +333,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber > 1)
     {
       Serial.printf("[TELNET] Reboot command doesn't accept any arguments!\n");
-      telnetPrint("Reboot command doesn't accept any arguments!\r\n");
+      caller.print("Reboot command doesn't accept any arguments!\r\n");
     }
     else
     {
@@ -473,7 +346,7 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
       // Stop accepting coins
       enableCoinAcceptance(false);
       // Close the TELNET-session if any
-      telnetClient.stop();
+      caller.disconnectClient();
       // telnetServer.stop(); There is another close() call at the begin() method. Duplicate stop() call causes server to not start.
       // Give some time for TCP connections to close before WiFi disconnect
       delay(100);
@@ -497,13 +370,13 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
     if (tokensNumber > 1)
     {
       Serial.printf("[TELNET] Help command doesn't accept any arguments!\n");
-      telnetPrint("Help command doesn't accept any arguments!\r\n");
+      caller.print("Help command doesn't accept any arguments!\r\n");
     }
     else
     {
       Serial.printf("[TELNET] Help command, printing help...\n");
       // Print the help
-      telnetPrint(
+      caller.print(
         "help - prints this output;\r\nlist - prints parameters;\r\n"
         "set <parameter> <value> - sets a new value to the parameter:\r\n"
         "\tTARGET_SSID - a target WiFi SSID;\r\n"
@@ -521,219 +394,12 @@ void parseCommand(String (&tokens)[commandMaxTokens], unsigned int tokensNumber)
   else
   {
     Serial.printf("[TELNET] Unknown command!\n");
-    telnetPrint("Unknown command!\r\n");
+    caller.print("Unknown command!\r\n");
   }
 }
 
-// TELNET server states
-enum TelnetServerState
-{
-  TSS_RECIEVE = 0,  // TELNET server recieves the user input
-  TSS_COMMAND,  // TELNET server waits for the NVT command
-  TSS_OPTION  // TELNET server waits for the NVT option
-};
-
-// TELNET commands
-enum TelnetCommand
-{
-  TELNET_INTERRUPT = 244,
-  TELNET_WILL = 251,
-  TELNET_WONT = 252,
-  TELNET_DO = 253,
-  TELNET_DONT = 254,
-  TELNET_IAC = 255
-};
-
-// Handle the incoming data to the TELNET server
-void handleTelnet()
-{
-  // TELNET server state
-  static TelnetServerState serverState;
-
-  // A new incoming client
-  if (telnetServer.hasClient())
-  {
-    // We already have a client connected
-    if (telnetClient.connected())
-    {
-      // Retrieve a client object
-      // HINT: WiFiClient supports object copy
-      WiFiClient newClient = telnetServer.available();
-      
-      Serial.printf("[TELNET] Rejected the client %s:%u. There is another client connected.\n",
-        newClient.remoteIP().toString().c_str(), newClient.remotePort());
-      // Close the client's connection
-      newClient.stop();
-    }
-    // No client is currently connected
-    else
-    {
-      // Save the client object
-      telnetClient = telnetServer.available();
-      Serial.printf("[TELNET] Accepted the client %s:%u\n", telnetClient.remoteIP().toString().c_str(), telnetClient.remotePort());
-
-      // Reset the TELNET server FSM
-      serverState = TSS_RECIEVE;
-
-      // Print a welcome text and the first greeting
-      telnetPrint("rosDonateBox terminal\r\n\r\n> ");
-    }
-  }
-
-  // The client is online
-  if (telnetClient.connected())
-  {
-    static int c;
-    // Command buffer
-    static String commandBuffer;
-
-    // Recieve a character from the client
-    c = telnetClient.read();
-
-    // If there is a character
-    while (c != -1)
-    { 
-      // Depending on the TELENET server's state
-      switch(serverState)
-      {
-        // Recieving a data from the client
-        case TSS_RECIEVE:
-          switch(c)
-          {
-            // Command termination
-            case '\n':
-              {
-                Serial.printf("[TELNET] Got command \"%s\"\n", commandBuffer.c_str());
-
-                // Command tokens buffer
-                String tokens[commandMaxTokens];
-
-                // Split the command string to the tokens
-                int result = scanCommand(commandBuffer, tokens);
-
-                // Split process has failed
-                if (result < 0)
-                {
-                  switch (result)
-                  {
-                    case CSE_MANY_TOKENS:
-                      telnetPrint("Too many arguments in the command!\r\n");
-                      break;
-                    case CSE_UNTERMINATED_ESCAPE:
-                      telnetPrint("Unterminated '\"' in the command!\r\n");
-                      break;
-                    default:
-                      break;
-                  }
-                }
-                // Split process has been successful
-                else if (result)
-                  // Pass the tokenized command for the further processing
-                  parseCommand(tokens, static_cast<unsigned int>(result));
-
-                // Clean the command buffer
-                commandBuffer = "";
-
-                // Print a command greeting
-                telnetPrint("> ");
-              }
-              break;
-            // NVT IAC
-            case TELNET_IAC:
-              Serial.printf("[TELNET] Incoming IAC\n");
-              // Prepare TELNET server to recieve an NVT command
-              serverState = TSS_COMMAND;
-              break;
-            // Some clients may send CR before the LF
-            case '\r':
-              // Ignore this character
-              break;
-            // ETX
-            // HINT: Some clients (like Windows TELNET) send ETX on Ctrl-C
-            case '\x03':
-              Serial.printf("[TELNET] Incoming ETX, closing the connection...\n", c);
-              // Close the client's connection
-              telnetClient.stop();
-              break;
-            // Any other character
-            default:
-              // It's printable
-              if (isPrintable(c))
-                // Store it inside the command buffer
-                commandBuffer += static_cast<char>(c);
-              // It's not a printable character
-              else
-                Serial.printf("[TELNET] Ignoring unprintable character: 0x%02X\n", c);
-              break;
-          }
-          break;
-        // Waiting for an NVT command
-        case TSS_COMMAND:
-          switch(c)
-          {
-            // Escape command for the IAC character
-            case TELNET_IAC:
-              Serial.printf("[TELNET] IAC escape detected\n");
-              // HINT: Just ignore the character, it's important only for binary mode
-              // Switch the server back to the recieving mode
-              serverState = TSS_RECIEVE;
-              break;
-            // DO command
-            case TELNET_DO:
-              Serial.printf("[TELNET] Incoming DO command: %i\n", c);
-              // Informing the server about a coming option
-              serverState = TSS_OPTION;
-              break;
-            // DONT command
-            case TELNET_DONT:
-              Serial.printf("[TELNET] Incoming DON'T command: %i\n", c);
-              // Informing the server about a coming option
-              serverState = TSS_OPTION;
-              break;
-            // WILL command
-            case TELNET_WILL:
-              Serial.printf("[TELNET] Incoming WILL command: %i\n", c);
-              // Informing the server about a coming option
-              serverState = TSS_OPTION;
-              break;
-            // WONT command
-            case TELNET_WONT:
-              Serial.printf("[TELNET] Incoming WON'T command: %i\n", c);
-              // Informing the server about a coming option
-              serverState = TSS_OPTION;
-              break;
-            // Ctrl-C has been pushed
-            case TELNET_INTERRUPT:
-              Serial.printf("[TELNET] Incoming process interrupt command: %i, closing the connection...\n", c);
-              // Close the client's connection
-              telnetClient.stop();
-              // Switch the server back to the recieving mode
-              serverState = TSS_RECIEVE;
-              break;
-            // HINT: Implement a new command here
-            // Unknown command
-            default:
-              Serial.printf("[TELNET] Unknown command: %i\n", c);
-              // Switch the server back to the recieving mode
-              serverState = TSS_RECIEVE;
-              break;
-          }
-          break;
-        // Waiting for an NVT option
-        case TSS_OPTION:
-          Serial.printf("[TELNET] Incoming option: %i\n", c); 
-          // HINT: In this version we just drop them (it's ok with the most clients)
-          // TODO: Implement NVT answers for the most popular options
-          // Switch the server back to the recieving mode
-          serverState = TSS_RECIEVE;
-          break;
-      }
-
-      // Read the new character from the client
-      c = telnetClient.read();
-    }
-  }
-}
+// TELNET server to configure the device
+TelnetServer telnetServer("rosDonateBox terminal", "> ", parseCommand);
 
 // Switch DG600F coin acceptance mode
 //  enable - accept coins (true); return coins (false).
@@ -1177,7 +843,6 @@ void loop()
       Serial.printf("[STATE] TELNET_SETUP\n");
       // Start the server
       telnetServer.begin();
-      // setNoDelay(true) makes clients to close connection in a moment after connections
       Serial.printf("[TELNET] Server ready\n");
 
       // WiFi AP mode
@@ -1314,7 +979,7 @@ void loop()
     if (wifiApMode || WiFi.isConnected())
     {
       // Handle the TELNET server data
-      handleTelnet();
+      telnetServer.handle();
 
       // After rosserial setup
       if (deviceState >= DS_ROSSERIAL_SETUP)
