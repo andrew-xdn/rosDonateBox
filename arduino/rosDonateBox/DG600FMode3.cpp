@@ -3,9 +3,7 @@
 int DG600FMode3::read()
 {
   // A character from the serial
-  static int c;
-  // A recieved coin value
-  static unsigned int value;
+  int c;
 
 //  // The buffer overflow detected
 //  // WARNING: Old SoftwareSerial library versions don't support this method
@@ -40,7 +38,7 @@ int DG600FMode3::read()
         if (c <= 100)
         {
           // Store the coin value
-          value = static_cast<unsigned int>(c);
+          this->value = static_cast<unsigned int>(c);
           DG600F_MODE3_DEBUG("[DG600F_MODE3] Received sum: %u\n", value);
 
           // Waiting for the frame checksum
@@ -66,7 +64,7 @@ int DG600FMode3::read()
       // Waiting for the checksum
       case DM3S_CHECKSUM:
         // Checksum is valid
-        if (c == (DG600FMode3::DG600FMode3Header ^ value))
+        if (c == (DG600FMode3::DG600FMode3Header ^ this->value))
         {
           DG600F_MODE3_DEBUG("[DG600F_MODE3] Received checksum (valid frame): 0x%02X\n", static_cast<unsigned int>(c));
 
@@ -76,7 +74,7 @@ int DG600FMode3::read()
           // Jump out of the function to return the coin value
           // HINT: Some data may still be in the serial buffer. User should call this function repeatedly until he or she
           //  gets -1.
-          return value;
+          return this->value;
         }
         // Invalid checksum
         else

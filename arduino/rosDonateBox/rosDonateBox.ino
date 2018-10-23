@@ -17,7 +17,7 @@
 #include <TimeLib.h>
 #include <uCRC16Lib.h>
 
-#include "config.hpp"
+#include "Config.hpp"
 #include "DG600FMode3.hpp"
 #include "CommandScanner.hpp"
 #include "TelnetServer.hpp"

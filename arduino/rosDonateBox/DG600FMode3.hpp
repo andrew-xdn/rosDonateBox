@@ -35,6 +35,8 @@ private:
   // DG600F Mode 3 FSM state
   // HINT: Self-synchronizing FSM, no need to reset this state outside of the function
   DG600FMode3State state;
+  // A recieved coin value
+  unsigned int value;
   
 public:
   DG600FMode3(Stream &serialStream)

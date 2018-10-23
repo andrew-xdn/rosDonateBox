@@ -32,6 +32,16 @@ enum TelnetCommand
   TELNET_IAC = 255
 };
 
+// TELNET server class prototype
+class TelnetServer;
+
+// An external function that parses a scanned command type
+// Arguments:
+//    caller - a calling TELNET server,
+//    tokens - command tokens array after scanning,
+//    tokensNumber - a number of tokens the scanner has found.
+typedef void(&TelnetParseFunctionRef)(TelnetServer &, String (&)[CommandScanner::commandMaxTokens], unsigned int);
+
 class TelnetServer
 {
 private:
@@ -49,15 +59,11 @@ private:
   // Command buffer
   String commandBuffer;
   // An external function that parses a scanned command
-  //  Arguments:
-  //    caller - a calling TELNET server,
-  //    tokens - command tokens array after scanning,
-  //    tokensNumber - a number of tokens the scanner has found.
-  std::function<void(TelnetServer &, String (&)[CommandScanner::commandMaxTokens], unsigned int)> parseFunction;
+  TelnetParseFunctionRef parseFunction;
 
 public:
   TelnetServer(String welcomeMessage, String commandGreeting,
-    std::function<void(TelnetServer &, String (&)[CommandScanner::commandMaxTokens], unsigned int)> parseFunction, const unsigned int port = 23)
+    TelnetParseFunctionRef parseFunction, const unsigned int port = 23)
   : server(port), welcomeMessage(welcomeMessage), commandGreeting(commandGreeting), parseFunction(parseFunction)
   {}
 

@@ -22,8 +22,10 @@ enum CommandScanError
 
 namespace CommandScanner
 {
+  // Maximum command arguments number in a command
+  static const unsigned int commandMaxArguments = 3;
   // Maximum command tokens number in a command string (command + maximum arguments number)
-  static constexpr unsigned int commandMaxTokens = 1 + config::commandMaxArguments;
+  static constexpr unsigned int commandMaxTokens = 1 + commandMaxArguments;
 
   // Split a command string to command tokens
   //  Arguments:
