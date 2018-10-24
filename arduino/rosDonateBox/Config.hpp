@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "pins_arduino.h"
 
-namespace config
+namespace Config
 {
   // Firmware version constants
   const int fwVersionMajor = 0;
@@ -35,6 +35,9 @@ namespace config
   const int displayWidth = 128;
   const int displayHeight = 64;
   //
+
+  // ROS topic name
+  const char* const rosTopicName = "donations";
 }
 
 #endif

@@ -1,3 +1,3 @@
 Header header
 
-uint16 sum
+float32 sum

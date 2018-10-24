@@ -52,9 +52,9 @@ DeviceState deviceState;
 struct DeviceEeprom
 {
   // Target WiFi network SSID (max length + '\0')
-  char targetSSID[config::maxSSIDLength + 1];
+  char targetSSID[Config::maxSSIDLength + 1];
   // Target WiFi network PSK (max length + '\0')
-  char targetPSK[config::maxPSKLength + 1];
+  char targetPSK[Config::maxPSKLength + 1];
 
   // rosserial server IP (integer representation)
   uint32_t rosserialIP;
@@ -178,7 +178,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
           }
 
         // SSID is short enought to fit into the EEPROM field
-        if (tokens[2].length() <= config::maxSSIDLength)
+        if (tokens[2].length() <= Config::maxSSIDLength)
         {
           // Copy the token contents inside the C string
           strcpy(deviceEeprom.targetSSID, tokens[2].c_str());
@@ -188,7 +188,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         else
         {
           Serial.printf("[TELNET] Too long SSID: %u\n", tokens[2].length());
-          caller.print(String("SSID can't be longer than ") + config::maxSSIDLength + "!\r\n");
+          caller.print(String("SSID can't be longer than ") + Config::maxSSIDLength + "!\r\n");
         }
       }
       // Target WiFi PSK
@@ -216,7 +216,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
           }
 
         // PSK is short enought to fit into the EEPROM field
-        if (tokens[2].length() <= config::maxPSKLength)
+        if (tokens[2].length() <= Config::maxPSKLength)
         {
           // Copy the token contents inside the C string
           strcpy(deviceEeprom.targetPSK, tokens[2].c_str());
@@ -226,7 +226,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         else
         {
           Serial.printf("[TELNET] Too long PSK: %u\n", tokens[2].length());
-          caller.print(String("PSK can't be longer than ") + config::maxPSKLength + "!\r\n");
+          caller.print(String("PSK can't be longer than ") + Config::maxPSKLength + "!\r\n");
         }
       }
       // rosserial server IP
@@ -398,7 +398,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
   }
 }
 
-// TELNET server to configure the device
+// TELNET server for device configuration
 TelnetServer telnetServer("rosDonateBox terminal", "> ", parseCommand);
 
 // Switch DG600F coin acceptance mode
@@ -406,13 +406,13 @@ TelnetServer telnetServer("rosDonateBox terminal", "> ", parseCommand);
 void enableCoinAcceptance(bool enable)
 {
   Serial.printf("[COIN_ACCEPTANCE] %s\n", (enable) ? "Enabled" : "Disabled");
-  digitalWrite(config::inhibitPin, (enable) ? HIGH : LOW);
+  digitalWrite(Config::inhibitPin, (enable) ? HIGH : LOW);
 }
 
 // Software serial object (RX only) connected to DG600F SIGNAL (after logic converter)
 // HINT: ESP8266 with Arduino doesn't have any free hardware serial RX. Software serial isn't a good
 // solution, but due to a high ESP8266 clock frequency and low DG600F SIGNAL baudrate (up to 9600) it works fine.
-SoftwareSerial DG600FSerial(config::signalPin, SW_SERIAL_UNUSED_PIN, false, config::signalRxBufferSize);
+SoftwareSerial DG600FSerial(Config::signalPin, SW_SERIAL_UNUSED_PIN, false, Config::signalRxBufferSize);
 
 // DG600F mode 3 driver
 DG600FMode3 coinAcceptor(DG600FSerial);
@@ -420,7 +420,7 @@ DG600FMode3 coinAcceptor(DG600FSerial);
 // A donation ROS message
 rosdonatebox_msgs::Donation donationMessage;
 // A ROS donation publisher
-ros::Publisher donations("donations", &donationMessage);
+ros::Publisher donations(Config::rosTopicName, &donationMessage);
 
 // Donation timeout timer
 Ticker donationTimeoutTicker;
@@ -438,7 +438,7 @@ void donationTimeoutCallback()
 bool donationStamped;
 
 // Display object
-SSD1306Brzo display(config::displayI2CAddress, SDA, SCL);
+SSD1306Brzo display(Config::displayI2CAddress, SDA, SCL);
 
 // Font heights constants to calculate frame geometry
 // HINT: It doesn't look like constexpr can calculate PROGMEM read requests
@@ -453,24 +453,24 @@ void displayLogo()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (config::displayHeight - (fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2 + fontArialMTPlain10Height)) / 2;
+  constexpr unsigned int yOffset = (Config::displayHeight - (fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2 + fontArialMTPlain10Height)) / 2;
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   // Project logo
   String logo("ROS Donate Box");
   uint16_t width = display.getStringWidth(logo);
-  display.drawString(config::displayWidth / 2, yOffset, logo);
+  display.drawString(Config::displayWidth / 2, yOffset, logo);
   //
-  display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, config::displayWidth);
+  display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, Config::displayWidth);
   // Firmware version string
-  String versionString(String('v') + config::fwVersionMajor + '.' + config::fwVersionMinor);
+  String versionString(String('v') + Config::fwVersionMajor + '.' + Config::fwVersionMinor);
   width = display.getStringWidth(versionString);
-  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3, versionString);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3, versionString);
   //
   // Add a catch phrase to fill some space at the bottom
   String catchPhrase("Robots need money too...");
   display.setFont(ArialMT_Plain_10);
-  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2, catchPhrase);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2, catchPhrase);
   //
   display.display();
 }
@@ -482,21 +482,21 @@ void displayConnectingFrame(String target)
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (config::displayHeight - (3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
+  constexpr unsigned int yOffset = (Config::displayHeight - (3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
   // Top line
-  display.drawHorizontalLine(0, yOffset, config::displayWidth);
+  display.drawHorizontalLine(0, yOffset, Config::displayWidth);
   // "Connecting to" header
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String header("Connecting to");
   uint16_t width = display.getStringWidth(header);
-  display.drawString(config::displayWidth / 2, yOffset + 3, header);
+  display.drawString(Config::displayWidth / 2, yOffset + 3, header);
   // Connection target text with a postfix
   String targetWithPostfix(target + "...");
   width = display.getStringWidth(targetWithPostfix);
-  display.drawString(config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
+  display.drawString(Config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
   // Bottom line
-  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, config::displayWidth);
+  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, Config::displayWidth);
   //
   display.display();
 }
@@ -506,24 +506,24 @@ void displayAPModeFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (config::displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
+  constexpr unsigned int yOffset = (Config::displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
   // Header
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String header = "SETUP MODE";
   uint16_t width = display.getStringWidth(header);
-  display.drawString(config::displayWidth / 2, yOffset, header);
+  display.drawString(Config::displayWidth / 2, yOffset, header);
   // Horizontal line to separate the header from connection information
-  display.drawLine(0, yOffset + 19 + 3, config::displayWidth, yOffset + 19 + 3);
+  display.drawLine(0, yOffset + 19 + 3, Config::displayWidth, yOffset + 19 + 3);
   // AP SSID
   display.setFont(ArialMT_Plain_10);
-  String ssidInfo(String("SSID: \"") + config::APModeSSID + '"');
+  String ssidInfo(String("SSID: \"") + Config::APModeSSID + '"');
   width = display.getStringWidth(ssidInfo);
-  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
   // Device IP address
   String ipInfo("IP: " + WiFi.softAPIP().toString());
   width = display.getStringWidth(ipInfo);
-  display.drawString(config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
   //
   display.display();
 }
@@ -570,7 +570,7 @@ void drawOverlay()
   // The last IP address octet on the right side
   display.setTextAlignment(TEXT_ALIGN_RIGHT);
   String IPLastOctet(WiFi.localIP()[3]);
-  display.drawString(config::displayWidth, 0, IPLastOctet);
+  display.drawString(Config::displayWidth, 0, IPLastOctet);
 }
 
 // Display the donation frame
@@ -578,7 +578,7 @@ void displayDonationFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = overlayHeight + (config::displayHeight - (overlayHeight + fontDialogPlain40Height)) / 2;
+  constexpr unsigned int yOffset = overlayHeight + (Config::displayHeight - (overlayHeight + fontDialogPlain40Height)) / 2;
   // Draw the overlay
   drawOverlay();
   // The donation has started
@@ -587,8 +587,8 @@ void displayDonationFrame()
     // Donation sum
     display.setFont(Dialog_plain_40);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
-    String donationSum(donationMessage.sum);
-    display.drawString(config::displayWidth / 2, yOffset, donationSum);
+    String donationSum(static_cast<unsigned int>(donationMessage.sum));
+    display.drawString(Config::displayWidth / 2, yOffset, donationSum);
   }
   //
   display.display();
@@ -599,14 +599,14 @@ void displayGratitudeFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = overlayHeight + (config::displayHeight - (overlayHeight + fontArialMTPlain24Height)) / 2;
+  constexpr unsigned int yOffset = overlayHeight + (Config::displayHeight - (overlayHeight + fontArialMTPlain24Height)) / 2;
   // Draw the overlay
   drawOverlay();
   // Gratitude
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   String donationSum("Thank you!");
-  display.drawString(config::displayWidth / 2, yOffset, donationSum);
+  display.drawString(Config::displayWidth / 2, yOffset, donationSum);
   //
   display.display();
 }
@@ -634,14 +634,14 @@ void setup()
   Serial.begin(115200);
   // DG600F SIGNAL pin pull-up setup
   // HINT: The pin direction has been set during the SoftwareSerial object construction
-  digitalWrite(config::signalPin, HIGH);
+  digitalWrite(Config::signalPin, HIGH);
   // DG600F SIGNAL UART setup
   DG600FSerial.begin(9600);
   // DG600F INHIBIT pin setup
-  pinMode(config::inhibitPin, OUTPUT);
+  pinMode(Config::inhibitPin, OUTPUT);
   
   //Serial.setDebugOutput(true);
-  Serial.printf("ROS Donate Box v%u.%u\n", config::fwVersionMajor, config::fwVersionMinor);
+  Serial.printf("ROS Donate Box v%u.%u\n", Config::fwVersionMajor, Config::fwVersionMinor);
 
   // Disable coins acceptance
   enableCoinAcceptance(false);
@@ -706,7 +706,7 @@ void loop()
 
       Serial.printf("[INIT] Display test\n");
       // Display test sequence
-      display.fillRect(0, 0, config::displayWidth, config::displayHeight);
+      display.fillRect(0, 0, Config::displayWidth, Config::displayHeight);
       display.display();
       delay(1000);
       display.clear();
@@ -819,7 +819,7 @@ void loop()
       Serial.printf("[STATE] WIFI_AP_SETUP\n");
 
       // Enable WiFi AP mode
-      if (!WiFi.softAP(config::APModeSSID, config::APModePSK))
+      if (!WiFi.softAP(Config::APModeSSID, Config::APModePSK))
       {
         Serial.printf("[WIFI] AP setup failed.\n");
 
@@ -1012,7 +1012,8 @@ void loop()
         // HINT: We can get an unprocessed donation after the reconnection here
         if (donationTimeoutExpired)
         {
-          Serial.printf("[DONATION] Total donation sum: %u!\n", donationMessage.sum);
+          // HINT: ESP8266 printf doesn't support %f
+          Serial.printf("[DONATION] Total donation sum: %s!\n", String(donationMessage.sum, 2).c_str());
 
           // The donation hasn't been stamped
           if (!donationStamped)
@@ -1024,7 +1025,7 @@ void loop()
             // Convert the ROS time to the UNIX time to print the debug output
             // WARNING: time_t is platform dependent
             time_t stampUnix = donationMessage.header.stamp.toSec();
-            Serial.printf("[DONATION] Donation has been stamped: %i:%i\n", hour(stampUnix), minute(stampUnix));
+            Serial.printf("[DONATION] Donation has been stamped: %02u:%02u\n", hour(stampUnix), minute(stampUnix));
           }
 
           // Publish the donation message
@@ -1079,7 +1080,8 @@ void loop()
 
           // Increase the donation sum by the new coin sum
           donationMessage.sum += coinValue;
-          Serial.printf("[DONATION] Current donation sum: %u!\n", donationMessage.sum);
+          // HINT: ESP8266 printf doesn't support %f
+          Serial.printf("[DONATION] Current donation sum: %s!\n", String(donationMessage.sum, 2).c_str());
 
           // Start the donation timeout timer
           // HINT: No need to stop the timer, it stops automatically on the new start
