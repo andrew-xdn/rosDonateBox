@@ -1,6 +1,7 @@
 
 // stdlib
 #include <limits.h>
+#include <math.h>
 // EPS8266
 #include <SoftwareSerial.h>
 #include <EEPROM.h>
@@ -61,6 +62,9 @@ struct DeviceEeprom
   // rosserial server port
   uint16_t rosserialPort;
 
+  // Coins value divider (1, 10, 100)
+  uint8_t coinValueDivider;
+
   // WARNING: Do not place any data fields after the checksum!
   // Checksum (CRC16)
   uint16_t crc16;
@@ -77,7 +81,8 @@ const DeviceEeprom deviceEepromDefault =
   .targetSSID = { '\0' },  // No target WiFi SSID
   .targetPSK = { '\0' },  // No target WiFi PSK
   .rosserialIP = 0,  // No rosserial IP
-  .rosserialPort = 11411  // No rosserial port
+  .rosserialPort = 11411,  // No rosserial port
+  .coinValueDivider = 1  // No fraction coins are allowed
   // No checksum
 };
 
@@ -132,7 +137,8 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
       caller.print(String("TARGET_SSID = \"") + deviceEeprom.targetSSID + "\"\r\nTARGET_PSK = " +
         ((deviceEeprom.targetPSK[0]) ? "****" : "-") + "\r\nROS_IP = " + 
         ((deviceEeprom.rosserialIP) ? IPAddress(deviceEeprom.rosserialIP).toString() : "-") + "\r\nROS_PORT = " +
-        ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\n");
+        ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\nCOIN_DIVIDER = " + 
+        deviceEeprom.coinValueDivider + "\r\n");
     }
   }
   // User wants to set a new value to the parameter
@@ -272,7 +278,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         // HINT: User can't reset the port number parameter
         if ((rosserialPort > 0) && (rosserialPort <= USHRT_MAX))
         {
-          deviceEeprom.rosserialPort = rosserialPort;
+          deviceEeprom.rosserialPort = static_cast<uint16_t>(rosserialPort);
           Serial.printf("[TELNET] New parameter value has been set\n");
         }
         // Invalid port number
@@ -280,6 +286,25 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         {
           Serial.printf("[TELNET] Invalid port!\n");
           caller.print("Invalid port!\r\n");
+        }
+      }
+      // Coin value divider
+      else if (tokens[1] == "COIN_DIVIDER")
+      {
+        // String object can convert itself to long
+        long coinValueDivider = tokens[2].toInt();
+
+        // Coin value divider can be 1, 10 or 100
+        if ((coinValueDivider == 1) or (coinValueDivider == 10) or (coinValueDivider == 100))
+        {
+          deviceEeprom.coinValueDivider = static_cast<uint8_t>(coinValueDivider);
+          Serial.printf("[TELNET] New parameter value has been set\n");
+        }
+        // Invalid coin value divider
+        else
+        {
+          Serial.printf("[TELNET] Invalid coin value divider!\n");
+          caller.print("Invalid coin value divider!\r\n");
         }
       }
       // HINT: You can handle new parameter here
@@ -383,6 +408,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         "\tTARGET_PSK - a target WiFi passhrase;\r\n"
         "\tROS_IP - a target ROS system IP address;\r\n"
         "\tROS_PORT - a target ROS system port.\r\n"
+        "\tCOIN_DIVIDER - divide coin value by this number (1, 10 or 100).\r\n"
         "save - save parameters from RAM to EEPROM;\r\n"
         "reboot - reboot device to apply new parameters or reconnect to the target network;\r\n"
         "exit or quit - exit from the termial.\r\n"
@@ -587,7 +613,10 @@ void displayDonationFrame()
     // Donation sum
     display.setFont(Dialog_plain_40);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
-    String donationSum(static_cast<unsigned int>(donationMessage.sum));
+    // Donation sum string format depends on the coin value divider
+    String donationSum = (deviceEeprom.coinValueDivider > 1) ?
+      String(donationMessage.sum, static_cast<unsigned int>(log10(deviceEeprom.coinValueDivider))) :
+      String(static_cast<unsigned int>(donationMessage.sum));
     display.drawString(Config::displayWidth / 2, yOffset, donationSum);
   }
   //
@@ -1074,12 +1103,16 @@ void loop()
         {
           Serial.printf("[DONATION] Added new coin: %u!\n", static_cast<unsigned int>(coinValue));
 
+          // Apply a coin value divider
+          float coinValueFraction = static_cast<float>(coinValue) / deviceEeprom.coinValueDivider;
+          Serial.printf("[DONATION] Updated coin value: %s!\n", String(coinValueFraction, 2).c_str());
+
           // It's a new donation
           if (!donationMessage.sum)
             Serial.printf("[DONATION] Registered new donation with ID: %u\n", donationMessage.header.seq);
 
           // Increase the donation sum by the new coin sum
-          donationMessage.sum += coinValue;
+          donationMessage.sum += coinValueFraction;
           // HINT: ESP8266 printf doesn't support %f
           Serial.printf("[DONATION] Current donation sum: %s!\n", String(donationMessage.sum, 2).c_str());
 
