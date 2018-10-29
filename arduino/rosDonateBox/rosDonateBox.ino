@@ -13,7 +13,8 @@
 // OLED display
 #include <brzo_i2c.h>
 #include <SSD1306Brzo.h>
-#include "fonts/Dialog40.h"
+// Minimal custom font with currency symbols
+#include "fonts/OpenSansPlain40Minimal.h"
 // Other
 #include <TimeLib.h>
 #include <uCRC16Lib.h>
@@ -47,6 +48,20 @@ bool wifiApMode;
 // Current device state
 DeviceState deviceState;
 
+// String currency code constants for every currency in the ROS donation message enum
+// HINT: NONE is the exception, this value is used only to display the empty currency by the list command
+const char* const currencyCodes[rosdonatebox_msgs::Donation::CUR_LAST]
+{
+  "-", "USD", "EUR", "RUR"
+};
+
+// Font symbols bindings for every currency in the ROS donation message enum
+// HINT: NONE character is not used at all, needed just for the correct offset
+const char currencyFontBindings[rosdonatebox_msgs::Donation::CUR_LAST]
+{
+  '\0', '\x24', '\x3C', '\x3D'
+};
+
 // Pack the following structure (saves some space on EEPROM)
 #pragma pack(push, 1) 
 // Device EEPROM record
@@ -64,6 +79,8 @@ struct DeviceEeprom
 
   // Coins value divider (1, 10, 100)
   uint8_t coinValueDivider;
+  // Currency according to the ROS donation message enum
+  uint8_t donationCurrency;
 
   // WARNING: Do not place any data fields after the checksum!
   // Checksum (CRC16)
@@ -82,7 +99,8 @@ const DeviceEeprom deviceEepromDefault =
   .targetPSK = { '\0' },  // No target WiFi PSK
   .rosserialIP = 0,  // No rosserial IP
   .rosserialPort = 11411,  // No rosserial port
-  .coinValueDivider = 1  // No fraction coins are allowed
+  .coinValueDivider = 1,  // No fraction coins are allowed
+  .donationCurrency = rosdonatebox_msgs::Donation::CUR_NONE // No currency
   // No checksum
 };
 
@@ -138,7 +156,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         ((deviceEeprom.targetPSK[0]) ? "****" : "-") + "\r\nROS_IP = " + 
         ((deviceEeprom.rosserialIP) ? IPAddress(deviceEeprom.rosserialIP).toString() : "-") + "\r\nROS_PORT = " +
         ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\nCOIN_DIVIDER = " + 
-        deviceEeprom.coinValueDivider + "\r\n");
+        deviceEeprom.coinValueDivider + "\r\nCURRENCY = " + currencyCodes[deviceEeprom.donationCurrency] + "\r\n");
     }
   }
   // User wants to set a new value to the parameter
@@ -307,6 +325,43 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
           caller.print("Invalid coin value divider!\r\n");
         }
       }
+      // Donation currency
+      else if (tokens[1] == "CURRENCY")
+      {
+        // Empty token, user wants to reset currency
+        if (!tokens[2].length())
+        {
+          // Clean up the C string
+          deviceEeprom.donationCurrency = rosdonatebox_msgs::Donation::CUR_NONE;
+          
+          Serial.printf("[TELNET] Parameter was reset\n");
+          return;
+        }
+        
+        // Convert the currency code to the upper case (it just looks better in the code)
+        tokens[2].toUpperCase();
+
+        Serial.printf("[TELNET] Currency code: \"%s\"\n", tokens[2].c_str());
+
+        // Check every code in the currency codes (except NONE, it was handled above)
+        for (uint8_t i = rosdonatebox_msgs::Donation::CUR_NONE + 1; i < rosdonatebox_msgs::Donation::CUR_LAST; i++)
+        {
+          // The currency codes match
+          if (tokens[2] == currencyCodes[i])
+          {
+            // Index is the correct currency value
+            deviceEeprom.donationCurrency = i;
+            Serial.printf("[TELNET] Currency index: %u\n", deviceEeprom.donationCurrency);
+            
+            Serial.printf("[TELNET] New parameter value has been set\n");
+            return;
+          }
+        }
+        // Unknown currency code
+
+        Serial.printf("[TELNET] Invalid currency code!\n");
+        caller.print("Invalid currency code!\r\n");
+      }
       // HINT: You can handle new parameter here
       // Unknown parameter
       else
@@ -409,6 +464,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         "\tROS_IP - a target ROS system IP address;\r\n"
         "\tROS_PORT - a target ROS system port.\r\n"
         "\tCOIN_DIVIDER - divide coin value by this number (1, 10 or 100).\r\n"
+        "\tCURRENCY - a donation currency (USD, EUR, RUR)."
         "save - save parameters from RAM to EEPROM;\r\n"
         "reboot - reboot device to apply new parameters or reconnect to the target network;\r\n"
         "exit or quit - exit from the termial.\r\n"
@@ -471,7 +527,7 @@ SSD1306Brzo display(Config::displayI2CAddress, SDA, SCL);
 const unsigned int fontArialMTPlain24Height = 28;
 const unsigned int fontArialMTPlain16Height = 19;
 const unsigned int fontArialMTPlain10Height = 13;
-const unsigned int fontDialogPlain40Height = 48;
+const unsigned int fontOpenSansRegular40MinimalHeight = 55;
 //
 
 // Display the project logo
@@ -604,20 +660,23 @@ void displayDonationFrame()
 {
   display.clear();
   // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = overlayHeight + (Config::displayHeight - (overlayHeight + fontDialogPlain40Height)) / 2;
+  constexpr unsigned int yOffset = overlayHeight + (Config::displayHeight - (overlayHeight + fontOpenSansRegular40MinimalHeight)) / 2;
   // Draw the overlay
   drawOverlay();
   // The donation has started
   if (donationMessage.sum)
   {
     // Donation sum
-    display.setFont(Dialog_plain_40);
+    display.setFont(OpenSans_Regular_40_Minimal);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     // Donation sum string format depends on the coin value divider
     String donationSum = (deviceEeprom.coinValueDivider > 1) ?
       String(donationMessage.sum, static_cast<unsigned int>(log10(deviceEeprom.coinValueDivider))) :
       String(static_cast<unsigned int>(donationMessage.sum));
-    display.drawString(Config::displayWidth / 2, yOffset, donationSum);
+    // Donation sum format also depends on the selected currency
+    display.drawString(Config::displayWidth / 2, yOffset,
+      (deviceEeprom.donationCurrency == rosdonatebox_msgs::Donation::CUR_NONE) ? donationSum
+      : donationSum + ' ' + currencyFontBindings[deviceEeprom.donationCurrency]);
   }
   //
   display.display();
@@ -770,7 +829,18 @@ void loop()
         }
         // Valid CRC16 checksum
         else
+        {
           Serial.printf("[EEPROM] OK\n");
+
+          // To prevent undefined behaviour if some currency support has been removed
+          if (deviceEeprom.donationCurrency >= rosdonatebox_msgs::Donation::CUR_LAST)
+          {
+            Serial.printf("[EEPROM] Invalid currency value in the valid EEPROM structure!\n");
+
+            // Reset the currency value
+            deviceEeprom.donationCurrency = rosdonatebox_msgs::Donation::CUR_NONE;
+          }
+        }
       }
 
       // Going to the WiFi connecting state
@@ -1049,6 +1119,9 @@ void loop()
           {
             // Stamp the ROS time
             donationMessage.header.stamp = nh.now();
+            // Update the donation currency
+            // HINT: In case it has been changed from the TELNET server
+            donationMessage.currency = deviceEeprom.donationCurrency;
             // Set the donation stamped flag
             donationStamped = true;
             // Convert the ROS time to the UNIX time to print the debug output
