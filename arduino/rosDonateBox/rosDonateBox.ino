@@ -76,6 +76,8 @@ struct DeviceEeprom
   uint32_t rosserialIP;
   // rosserial server port
   uint16_t rosserialPort;
+  // Time zone UTC offset (hours * 60 + minutes)
+  int16_t timeZoneOffset;
 
   // Coins value divider (1, 10, 100)
   uint8_t coinValueDivider;
@@ -99,6 +101,7 @@ const DeviceEeprom deviceEepromDefault =
   .targetPSK = { '\0' },  // No target WiFi PSK
   .rosserialIP = 0,  // No rosserial IP
   .rosserialPort = 11411,  // No rosserial port
+  .timeZoneOffset = 0, // UTC+00:00
   .coinValueDivider = 1,  // No fraction coins are allowed
   .donationCurrency = rosdonatebox_msgs::Donation::CUR_NONE // No currency
   // No checksum
@@ -106,6 +109,9 @@ const DeviceEeprom deviceEepromDefault =
 
 // ROS handle
 ros::NodeHandle nh;
+
+// Buffer for a sprintf function call ("00:00\0")
+constexpr unsigned int timeZoneOffsetBufferSize = 2 * 2 + 1 + 1;
 
 // Parse a TELNET command
 //  Arguments:
@@ -151,11 +157,19 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
     {
       Serial.printf("[TELNET] List command, printing EEPROM parameters...\n");
 
+      // Time zone offset (HH:MM)
+      char timeZoneOffsetBuffer[timeZoneOffsetBufferSize];
+      // Positive time zone offset
+      unsigned int timeZoneOffsetAbs = abs(deviceEeprom.timeZoneOffset);
+      // Format tme zone offset
+      snprintf(timeZoneOffsetBuffer, sizeof(timeZoneOffsetBuffer), "%02u:%02u", timeZoneOffsetAbs / 60, timeZoneOffsetAbs % 60);
+
       // Print all device EEPROM parameter using the string class
       caller.print(String("TARGET_SSID = \"") + deviceEeprom.targetSSID + "\"\r\nTARGET_PSK = " +
-        ((deviceEeprom.targetPSK[0]) ? "****" : "-") + "\r\nROS_IP = " + 
-        ((deviceEeprom.rosserialIP) ? IPAddress(deviceEeprom.rosserialIP).toString() : "-") + "\r\nROS_PORT = " +
-        ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\nCOIN_DIVIDER = " + 
+        ((deviceEeprom.targetPSK[0]) ? "****" : "-") + "\r\nROSSERIAL_IP = " + 
+        ((deviceEeprom.rosserialIP) ? IPAddress(deviceEeprom.rosserialIP).toString() : "-") + "\r\nROSSERIAL_PORT = " +
+        ((deviceEeprom.rosserialPort) ? String(deviceEeprom.rosserialPort) : "-") + "\r\nTIME_ZONE = UTC" +
+        ((deviceEeprom.timeZoneOffset < 0) ? '-' : '+') + timeZoneOffsetBuffer + "\r\nCOIN_DIVIDER = " + 
         deviceEeprom.coinValueDivider + "\r\nCURRENCY = " + currencyCodes[deviceEeprom.donationCurrency] + "\r\n");
     }
   }
@@ -254,7 +268,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         }
       }
       // rosserial server IP
-      else if (tokens[1] == "ROS_IP")
+      else if (tokens[1] == "ROSSERIAL_IP")
       {
         // Empty token, user wants to reset the rosserial server IP
         if (!tokens[2].length())
@@ -287,7 +301,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         }
       }
       // rosserial server port
-      else if (tokens[1] == "ROS_PORT")
+      else if (tokens[1] == "ROSSERIAL_PORT")
       {
         // String object can convert itself to long
         long rosserialPort = tokens[2].toInt();
@@ -304,6 +318,132 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         {
           Serial.printf("[TELNET] Invalid port!\n");
           caller.print("Invalid port!\r\n");
+        }
+      }
+      // UTC time zone offset
+      else if (tokens[1] == "TIME_ZONE")
+      {
+        // Empty token, user wants to reset a UTC time zone offset
+        if (!tokens[2].length())
+        {
+          // UTC+00:00
+          deviceEeprom.timeZoneOffset = 0;
+          
+          Serial.printf("[TELNET] Parameter was reset\n");
+          return;
+        }
+        
+        // HINT: Accepts only "[+-][D]D:[D]D" offset format
+        
+        // Look for ':' in the string
+        int timeDelimiterIndex = tokens[2].indexOf(':');
+
+        // No ':' in the string, ":[D][D]", "[D]D:"
+        if ((timeDelimiterIndex < 0) || !timeDelimiterIndex || (timeDelimiterIndex == (tokens[2].length() - 1)))
+        {
+          Serial.printf("[TELNET] Invalid UTC offset!\n");
+          caller.print("Invalid UTC offset!\r\n");
+        }
+        // Looks like a valid offset format
+        else
+        {
+          // Extract the hours part ("[+-][D]D"), last character is not included
+          String hoursString = tokens[2].substring(0, timeDelimiterIndex);
+          Serial.printf("[TELNET] UTC offset hours token: \"%s\"\n", hoursString.c_str());
+
+          // Hours sign changes minutes parsing behaviour
+          bool positiveOffset;
+
+          // It's a zero value with a positive sign
+          // HINT: String object returns 0 if integer has an invalid format
+          if ((hoursString == "0") || (hoursString == "00") || (hoursString == "+0")
+            || (hoursString == "+00"))
+          {
+            // Positive offset
+            positiveOffset = true;
+            // Zero hours
+            deviceEeprom.timeZoneOffset = 0;
+          }
+          // It's a zero value with a negative sign
+          // HINT: String object returns 0 if integer has an invalid format
+          else if ((hoursString == "-0") || (hoursString == "-00"))
+          {
+            // Negative offset
+            positiveOffset = false;
+            // Zero hours
+            deviceEeprom.timeZoneOffset = 0;
+          }
+          // It's not a zero value
+          else
+          {
+            // String object can convert itself to long
+            long hours = hoursString.toInt();
+  
+            // A valid integer
+            if (hours)
+            {
+              // Time zone offset hours integrity check
+              if ((hours < -12) || (hours > 14))
+              {
+                Serial.printf("[TELNET] Invalid UTC offset hours!\n");
+                caller.print("Invalid UTC offset hours!\r\n");
+                return;
+              }
+  
+              // Check the hours sign
+              positiveOffset = hours >= 0; 
+  
+              // Calculate a time zone offset by hours
+              deviceEeprom.timeZoneOffset = hours * 60;
+            }
+            // It's an invalid integer
+            else
+            {
+              Serial.printf("[TELNET] Invalid UTC offset hours!\n");
+              caller.print("Invalid UTC offset hours!\r\n");
+              return;
+            }
+          }
+
+          // Extract the minutes part ("[D]D"), last character is not included
+          String minutesString = tokens[2].substring(timeDelimiterIndex + 1, tokens[2].length());
+          Serial.printf("[TELNET] UTC offset minutes token: \"%s\"\n", minutesString.c_str());
+
+          // It's not a zero value
+          // HINT: String object returns 0 if integer has an invalid format
+          if ((minutesString != "0") && (minutesString != "00"))
+          {
+            // String object can convert itself to long
+            long minutes = minutesString.toInt();
+  
+            // A valid integer
+            if (minutes)
+            {
+              // Time zone offset minutes integrity check
+              if ((minutes < 0) || (minutes > 59))
+              {
+                Serial.printf("[TELNET] Invalid UTC offset minutes!\n");
+                caller.print("Invalid UTC offset minutes!\r\n");
+                return;
+              }
+  
+              // Positive hours value
+              if (positiveOffset)
+                deviceEeprom.timeZoneOffset += minutes;
+              // Negative hours value
+              else
+                deviceEeprom.timeZoneOffset -= minutes;
+            }
+            // It's an invalid integer
+            else
+            {
+              Serial.printf("[TELNET] Invalid UTC offset minutes!\n");
+              caller.print("Invalid UTC offset minutes!\r\n");
+              return;
+            }
+          }
+          // HINT: No need to handle minutes zero value
+          Serial.printf("[TELNET] New parameter value has been set\n");
         }
       }
       // Coin value divider
@@ -463,6 +603,7 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
         "\tTARGET_PSK - a target WiFi passhrase;\r\n"
         "\tROS_IP - a target ROS system IP address;\r\n"
         "\tROS_PORT - a target ROS system port.\r\n"
+        "\tTIME_ZONE - an UTC time zone offset (set in format +-00:00)"
         "\tCOIN_DIVIDER - divide coin value by this number (1, 10 or 100).\r\n"
         "\tCURRENCY - a donation currency (USD, EUR, RUR)."
         "save - save parameters from RAM to EEPROM;\r\n"
@@ -636,9 +777,9 @@ void drawOverlay()
   // Clock is ready
   if (clockReadyTimeout)
   {
-    // Retrieve the ROS time
+    // Retrieve the ROS time and convert to a local time
     // WARNING: time_t is platform dependent
-    time_t currentTime = nh.now().toSec();
+    time_t currentTime = nh.now().toSec() + deviceEeprom.timeZoneOffset * 60;
     // Clock (HH:MM:SS)
     char clockTextBuffer[clockBufferSize];
     snprintf(clockTextBuffer, sizeof(clockTextBuffer), "%02u:%02u:%02u", hour(currentTime), minute(currentTime), second(currentTime));
