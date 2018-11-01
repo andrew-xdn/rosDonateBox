@@ -698,59 +698,6 @@ void displayLogo()
   display.display();
 }
 
-// Display "connecting to" frame
-// Arguments:
-//  target - a connection target string.
-void displayConnectingFrame(String target)
-{
-  display.clear();
-  // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (Config::displayHeight - (3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
-  // Top line
-  display.drawHorizontalLine(0, yOffset, Config::displayWidth);
-  // "Connecting to" header
-  display.setFont(ArialMT_Plain_16);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  String header("Connecting to");
-  uint16_t width = display.getStringWidth(header);
-  display.drawString(Config::displayWidth / 2, yOffset + 3, header);
-  // Connection target text with a postfix
-  String targetWithPostfix(target + "...");
-  width = display.getStringWidth(targetWithPostfix);
-  display.drawString(Config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
-  // Bottom line
-  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, Config::displayWidth);
-  //
-  display.display();
-}
-
-// Displays AP mode frame
-void displayAPModeFrame()
-{
-  display.clear();
-  // Calculate the Y axis offset to center the frame contents vertically
-  constexpr unsigned int yOffset = (Config::displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
-  // Header
-  display.setFont(ArialMT_Plain_16);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  String header = "SETUP MODE";
-  uint16_t width = display.getStringWidth(header);
-  display.drawString(Config::displayWidth / 2, yOffset, header);
-  // Horizontal line to separate the header from connection information
-  display.drawLine(0, yOffset + 19 + 3, Config::displayWidth, yOffset + 19 + 3);
-  // AP SSID
-  display.setFont(ArialMT_Plain_10);
-  String ssidInfo(String("SSID: \"") + Config::APModeSSID + '"');
-  width = display.getStringWidth(ssidInfo);
-  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
-  // Device IP address
-  String ipInfo("IP: " + WiFi.softAPIP().toString());
-  width = display.getStringWidth(ipInfo);
-  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
-  //
-  display.display();
-}
-
 // Clock ready timer
 // HINT: There is no way to determine the end of rosserial clock synchronization process
 Ticker clockReadyTimeoutTicker;
@@ -769,31 +716,95 @@ constexpr unsigned int clockBufferSize = 2 * 3 + 1 * 2 + 1;
 constexpr unsigned int overlayHeight = fontArialMTPlain10Height;
 
 // Draw the device overlay with clock and the last IP address octet
-void drawOverlay()
+// Arguments:
+//  drawClock - draw ROS system clock.
+void drawOverlay(bool drawClock = true)
 {
   // Clock or placeholder on the left side
   display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  // Clock is ready
-  if (clockReadyTimeout)
+  if (drawClock)
   {
-    // Retrieve the ROS time and convert to a local time
-    // WARNING: time_t is platform dependent
-    time_t currentTime = nh.now().toSec() + deviceEeprom.timeZoneOffset * 60;
-    // Clock (HH:MM:SS)
-    char clockTextBuffer[clockBufferSize];
-    snprintf(clockTextBuffer, sizeof(clockTextBuffer), "%02u:%02u:%02u", hour(currentTime), minute(currentTime), second(currentTime));
-    display.drawString(0, 0, clockTextBuffer);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    // Clock is ready
+    if (clockReadyTimeout)
+    {
+      // Retrieve the ROS time and convert to a local time
+      // WARNING: time_t is platform dependent
+      time_t currentTime = nh.now().toSec() + deviceEeprom.timeZoneOffset * 60;
+      // Clock (HH:MM:SS)
+      char clockTextBuffer[clockBufferSize];
+      snprintf(clockTextBuffer, sizeof(clockTextBuffer), "%02u:%02u:%02u", hour(currentTime), minute(currentTime), second(currentTime));
+      display.drawString(0, 0, clockTextBuffer);
+    }
+    // Clock is not ready
+    else
+      // Print "SYNC" instead
+      display.drawString(0, 0, "SYNC");
   }
-  // Clock is not ready
-  else
-    // Print "SYNC" instead
-    display.drawString(0, 0, "SYNC");
   //
   // The last IP address octet on the right side
   display.setTextAlignment(TEXT_ALIGN_RIGHT);
   String IPLastOctet(WiFi.localIP()[3]);
   display.drawString(Config::displayWidth, 0, IPLastOctet);
+}
+
+// Display "connecting to" frame
+// Arguments:
+//  target - a connection target string,
+//  showIP - show last IP address decimal recieved from the target WiFi network.
+void displayConnectingFrame(String target, bool showIP = false)
+{
+  display.clear();
+  // Calculate the Y axis offset to center the frame contents vertically
+  constexpr unsigned int yOffset = overlayHeight + (Config::displayHeight - (overlayHeight + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2)) / 2;
+  if (showIP)
+    // Draw the overlay
+    drawOverlay(false);
+  // Top line
+  display.drawHorizontalLine(0, yOffset, Config::displayWidth);
+  // "Connecting to" header
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  String header("Connecting to");
+  uint16_t width = display.getStringWidth(header);
+  display.drawString(Config::displayWidth / 2, yOffset + 3, header);
+  // Connection target text with a postfix
+  String targetWithPostfix(target + "...");
+  width = display.getStringWidth(targetWithPostfix);
+  display.drawString(Config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
+  // Bottom line
+  display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, Config::displayWidth);
+  //
+  display.display();
+}
+
+// Displays setup mode frame
+// Arguments:
+//  APMode - device in the AP mode.
+void displaySetupModeFrame(bool APMode = true)
+{
+  display.clear();
+  // Calculate the Y axis offset to center the frame contents vertically
+  constexpr unsigned int yOffset = (Config::displayHeight - (fontArialMTPlain16Height + 5 + fontArialMTPlain10Height + fontArialMTPlain10Height)) / 2;
+  // Header
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  String header = "SETUP MODE";
+  uint16_t width = display.getStringWidth(header);
+  display.drawString(Config::displayWidth / 2, yOffset, header);
+  // Horizontal line to separate the header from connection information
+  display.drawLine(0, yOffset + 19 + 3, Config::displayWidth, yOffset + 19 + 3);
+  // AP SSID
+  display.setFont(ArialMT_Plain_10);
+  String ssidInfo(String("SSID: \"") + ((APMode) ? Config::APModeSSID : deviceEeprom.targetSSID) + '"');
+  width = display.getStringWidth(ssidInfo);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
+  // Device IP address
+  String ipInfo("IP: " + ((APMode) ? WiFi.softAPIP().toString() : WiFi.localIP().toString()));
+  width = display.getStringWidth(ipInfo);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
+  //
+  display.display();
 }
 
 // Display the donation frame
@@ -1070,7 +1081,7 @@ void loop()
       }
 
       Serial.printf("[WIFI] AP ready. Device IP: %s.\n", WiFi.softAPIP().toString().c_str());
-      displayAPModeFrame();
+      displaySetupModeFrame();
 
       // Set AP mode flag
       wifiApMode = true;
@@ -1104,7 +1115,7 @@ void loop()
     // Configuring rosserial
     case DS_ROSSERIAL_SETUP:
       Serial.printf("[STATE] ROSSERIAL_SETUP\n");
-      displayConnectingFrame("rosserial");
+      displayConnectingFrame("rosserial", true);
 
       // User has set rosserial server parameters
       if (deviceEeprom.rosserialIP && deviceEeprom.rosserialPort)
@@ -1130,6 +1141,8 @@ void loop()
       else
       {
         Serial.printf("[ROSSERIAL] No rosserial IP or port!\n");
+
+        displaySetupModeFrame(false);
         
         Serial.printf("[STATE] TELNET_ONLY\n");
         // Going to the TELNET-only state
@@ -1185,7 +1198,7 @@ void loop()
         Serial.printf("[GUI] Clock update timer has been stopped\n");
         
         Serial.printf("[ROSSERIAL] Connecting to rosserial server...\n");
-        displayConnectingFrame("rosserial");
+        displayConnectingFrame("rosserial", true);
         
         Serial.printf("[STATE] ROSSERIAL_CONNECTING\n");
         // Going to the rosserial connecting state
