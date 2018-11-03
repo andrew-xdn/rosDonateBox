@@ -45,6 +45,9 @@ typedef void(&TelnetParseFunctionRef)(TelnetServer &, String (&)[CommandScanner:
 class TelnetServer
 {
 private:
+  // Maximum command length
+  static const unsigned int commandMaxLength = 60;
+
   // TELNET server state
   TelnetServerState state;
   // Server object

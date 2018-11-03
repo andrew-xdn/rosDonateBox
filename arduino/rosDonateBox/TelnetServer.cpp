@@ -14,6 +14,8 @@ void TelnetServer::handle()
       
       TELNET_SERVER_DEBUG("[TELNET] Rejected the client %s:%u. There is another client connected.\n",
         newClient.remoteIP().toString().c_str(), newClient.remotePort());
+      // Inform the user about the problem
+      newClient.print("This server can serve only one client at the same time!\r\n");
       // Close the client's connection
       newClient.stop();
     }
@@ -112,8 +114,23 @@ void TelnetServer::handle()
             default:
               // It's printable
               if (isPrintable(c))
-                // Store it inside the command buffer
-                this->commandBuffer += static_cast<char>(c);
+              {
+                // The user command is too long
+                if ((this->commandBuffer.length() + 1) > TelnetServer::commandMaxLength)
+                {
+                  // Print a command greeting
+                  this->print("\n\rThe command is too long!\n\r");
+                  
+                  // Clean the command buffer
+                  this->commandBuffer = "";
+
+                  // Print a command greeting
+                  this->print(this->commandGreeting);
+                }
+                else
+                  // Store it inside the command buffer
+                  this->commandBuffer += static_cast<char>(c);
+              }
               // It's not a printable character
               else
                 TELNET_SERVER_DEBUG("[TELNET] Ignoring unprintable character: 0x%02X\n", c);
