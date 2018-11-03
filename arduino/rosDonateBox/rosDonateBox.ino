@@ -18,11 +18,11 @@
 // Other
 #include <TimeLib.h>
 #include <uCRC16Lib.h>
-
+// Internal modules
 #include "Config.hpp"
-#include "DG600FMode3.hpp"
 #include "CommandScanner.hpp"
 #include "TelnetServer.hpp"
+#include "DG600FMode3.hpp"
 
 // Device FSM states
 enum DeviceState
@@ -39,6 +39,14 @@ enum DeviceState
   // WARNING: Display overlay enabled from this state
   DS_ROSSERIAL_READY,  // rosserial ready (main device state, coin acceptor enabled)
   DS_GRATITUDE  // Displaying something nice for a user (coin acceptor enabled)
+};
+
+// Device error codes
+enum DeviceError
+{
+  DE_WIFI_AP_SETUP = 1,  // Failed to setup WiFi AP mode
+  // The last enum record
+  DE_LAST
 };
 
 // The device is in the AP mode
@@ -686,7 +694,10 @@ void displayLogo()
   //
   display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, Config::displayWidth);
   // Firmware version string
-  String versionString(String('v') + Config::fwVersionMajor + '.' + Config::fwVersionMinor);
+  String versionString('v');
+  versionString += Config::fwVersionMajor;
+  versionString += '.';
+  versionString += Config::fwVersionMinor;
   width = display.getStringWidth(versionString);
   display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3, versionString);
   //
@@ -694,6 +705,41 @@ void displayLogo()
   String catchPhrase("Robots need money too...");
   display.setFont(ArialMT_Plain_10);
   display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3 + fontArialMTPlain16Height + 2, catchPhrase);
+  //
+  display.display();
+}
+
+// Erroe code descriptions
+const char* const errorDescriptions[DE_LAST]
+{
+  // HINT: Offset, do not remove!
+  NULL,
+  "Failed to setup WiFi AP"  // DE_WIFI_AP_SETUP
+};
+
+// Display error screen
+// Arguments:
+//  error - error code.
+void displayErrorFrame(DeviceError error)
+{
+  display.clear();
+  // Calculate the Y axis offset to center the frame contents vertically
+  constexpr unsigned int yOffset = (Config::displayHeight - (fontArialMTPlain16Height + 3 + fontArialMTPlain10Height)) / 2;
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  // Error header
+  String errorHeader("ERROR #");
+  errorHeader += error;
+  uint16_t width = display.getStringWidth(errorHeader);
+  display.drawString(Config::displayWidth / 2, yOffset, errorHeader);
+  //
+  display.drawHorizontalLine(0, yOffset + fontArialMTPlain16Height + 1, Config::displayWidth);
+  // Error description
+  String errorDescription(errorDescriptions[error]);
+  errorDescription += '!';
+  width = display.getStringWidth(errorDescription);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 3, errorDescription);
   //
   display.display();
 }
@@ -768,10 +814,10 @@ void displayConnectingFrame(String target, bool showIP = false)
   String header("Connecting to");
   uint16_t width = display.getStringWidth(header);
   display.drawString(Config::displayWidth / 2, yOffset + 3, header);
-  // Connection target text with a postfix
-  String targetWithPostfix(target + "...");
-  width = display.getStringWidth(targetWithPostfix);
-  display.drawString(Config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, targetWithPostfix);
+  // Add a postfix to the target text
+  target += "...";
+  width = display.getStringWidth(target);
+  display.drawString(Config::displayWidth / 2, yOffset + 3 + fontArialMTPlain16Height, target);
   // Bottom line
   display.drawHorizontalLine(0, yOffset + 3 + fontArialMTPlain16Height + fontArialMTPlain16Height + 2, Config::displayWidth);
   //
@@ -796,11 +842,14 @@ void displaySetupModeFrame(bool APMode = true)
   display.drawLine(0, yOffset + 19 + 3, Config::displayWidth, yOffset + 19 + 3);
   // AP SSID
   display.setFont(ArialMT_Plain_10);
-  String ssidInfo(String("SSID: \"") + ((APMode) ? Config::APModeSSID : deviceEeprom.targetSSID) + '"');
+  String ssidInfo("SSID: \"");
+  ssidInfo += (APMode) ? Config::APModeSSID : deviceEeprom.targetSSID;
+  ssidInfo += '"';
   width = display.getStringWidth(ssidInfo);
   display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5, ssidInfo);
   // Device IP address
-  String ipInfo("IP: " + ((APMode) ? WiFi.softAPIP().toString() : WiFi.localIP().toString()));
+  String ipInfo("IP: ");
+  ipInfo += (APMode) ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
   width = display.getStringWidth(ipInfo);
   display.drawString(Config::displayWidth / 2, yOffset + fontArialMTPlain16Height + 5 + fontArialMTPlain10Height, ipInfo);
   //
@@ -1059,7 +1108,7 @@ void loop()
       // User hasn't set target WiFi parameters
       else
       {
-        Serial.printf("[WIFI] No target SSID. Starting AP...\n");
+        Serial.printf("[WIFI] No target SSID or PSK. Starting AP...\n");
 
         // Going to the AP setup state
         deviceState = DS_WIFI_AP_SETUP;
@@ -1074,6 +1123,8 @@ void loop()
       {
         Serial.printf("[WIFI] AP setup failed.\n");
 
+        displayErrorFrame(DE_WIFI_AP_SETUP);
+
         Serial.printf("[STATE] ERROR\n");
         // AP setup mode failed, it's a serious problem
         deviceState = DS_ERROR;
@@ -1081,6 +1132,7 @@ void loop()
       }
 
       Serial.printf("[WIFI] AP ready. Device IP: %s.\n", WiFi.softAPIP().toString().c_str());
+      
       displaySetupModeFrame();
 
       // Set AP mode flag
