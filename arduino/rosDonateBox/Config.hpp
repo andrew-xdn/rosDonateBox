@@ -9,7 +9,7 @@ namespace Config
 {
   // Firmware version constants
   const int fwVersionMajor = 0;
-  const int fwVersionMinor = 4;
+  const int fwVersionMinor = 8;
   
   // Maximum WiFi SSID length
   const int maxSSIDLength = 30;
