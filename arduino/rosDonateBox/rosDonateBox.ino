@@ -605,17 +605,18 @@ void parseCommand(TelnetServer &caller, String (&tokens)[CommandScanner::command
       Serial.printf("[TELNET] Help command, printing help...\n");
       // Print the help
       caller.print(
-        "help - prints this output;\r\nlist - prints parameters;\r\n"
+        "help - prints this output;\r\n"
+        "list - prints parameters;\r\n"
         "set <parameter> <value> - sets a new value to the parameter:\r\n"
         "\tTARGET_SSID - a target WiFi SSID;\r\n"
         "\tTARGET_PSK - a target WiFi passhrase;\r\n"
-        "\tROS_IP - a target ROS system IP address;\r\n"
-        "\tROS_PORT - a target ROS system port.\r\n"
-        "\tTIME_ZONE - an UTC time zone offset (set in format +-00:00)"
+        "\tROSSERIAL_IP - a target ROS system IP address;\r\n"
+        "\tROSSERIAL_PORT - a target ROS system port.\r\n"
+        "\tTIME_ZONE - an UTC time zone offset (+-00:00)\r\n"
         "\tCOIN_DIVIDER - divide coin value by this number (1, 10 or 100).\r\n"
-        "\tCURRENCY - a donation currency (USD, EUR, RUR)."
+        "\tCURRENCY - a donation currency (USD, EUR, RUR).\r\n"
         "save - save parameters from RAM to EEPROM;\r\n"
-        "reboot - reboot device to apply new parameters or reconnect to the target network;\r\n"
+        "reboot - reboot the device to apply new parameters or reconnect to the target network;\r\n"
         "exit or quit - exit from the termial.\r\n"
       );
     }
